@@ -5,7 +5,7 @@ import HomotopyContinuation: @var, evaluate, Expression
 include("auxiliary_functions.jl")
 include("plotting_functionality.jl")
 
-export runTest, computeCoverInvariants, printValues, runTest_weighted
+export runTest, computeCoverInvariants, printValues, runTest_weighted, runTest_montecarlo
 
 
 # Initialization
@@ -34,6 +34,10 @@ end
 global lineConfigurations = [[[1,5],[7,3],[8,9],[6,2],[4,10]], [[1,5],[7,3],[9,10],[6,2],[8,4]]]
 
 
+
+global montecarloconfigurations = [[[1,4,6],[2,5,8],[3,7],[9,10]], [[1,7,9],[3,5,10],[2,6],[4,8]], [[3,5,8],[1,4,7],[9,10],[2,6]],
+[[1,7,9],[3,5,8],[2,6],[4,10]], [[1,6,9],[2,5,8],[3,7],[4,10]], [[1,4,7],[3,5,10],[8,9],[2,6]],
+[[2,5,10],[1,4,6],[3,7],[8,9]], [[1,6,9],[2,5,10],[3,7],[4,8]], [[1,5],[7,3],[8,9],[6,2],[4,10]], [[1,5],[7,3],[9,10],[6,2],[8,4]]]
 # Methods
 
 #=
@@ -44,6 +48,43 @@ compare their quality. All covers are compared to the cover CC(9) introduced by 
 function runTest( ; boxsize=1, numberOfSamplingRuns=150, prefix="michaelismentontest", suffix="NEW")
     θ = auxiliary_functions.createθcircuits(hexPoints, coefficients, lineConfigurations, triangConfigurations)
     auxiliary_functions.runSamplingComparison(θ, κ, aη, bη, mcoef, θ[9]; boxsize=boxsize, numberOfSamplingRuns=numberOfSamplingRuns, prefix=prefix, suffix=suffix)
+end
+
+#=
+This is the test functionality for weighted covers. Currently, the test is implemented for the combinations of 3 covers,
+creating a simplicial homotopy.
+=#
+function runTest_montecarlo(; boxsize=1, numberOfSamplingRuns=20, discretization=25)    
+    # Check if the input `coversToCompare` has the correct format
+    global curval = [1/10 for _ in 1:10]
+    global cur_coverage = [0, curval]
+    global none_found = 0
+    global sampling = []
+    global pointnumber = 0
+    for sampleindex in 1:numberOfSamplingRuns
+        global sampling = vcat(sampling, filter(sampler -> !any(t->isapprox(t,0), sampler) && evaluate(aη,κ=>sampler)>0 && evaluate(bη,κ=>sampler)<0, [boxsize * abs.(rand(Float64,length(κ))) for _ in 1:1000000]))
+    end
+    global pointnumber = length(sampling)
+    while true
+        global prev_val = curval
+        θ_montecarlo = auxiliary_functions.createθcircuit_montecarlo(hexPoints, coefficients, montecarloconfigurations, curval)
+        our_model = auxiliary_functions.runSamplingComparison_MC(sampling, θ_montecarlo, κ, aη, bη, mcoef; boxsize=boxsize, numberOfSamplingRuns=numberOfSamplingRuns, discretization=discretization)
+        cur_error = our_model/pointnumber
+        display(cur_error)
+        if cur_coverage[1] < cur_error
+            global cur_coverage = [cur_error, curval]
+            global none_found = 0
+        else
+            none_found = none_found+1
+            if none_found > 10
+                return cur_coverage
+            end
+            global curval = prev_val
+        end
+        global curval = map(t->t<0 ? 0 : t, curval + 1/discretization .* rand([-1,0,1],10))
+        global curval = curval/sum(curval)    
+    end
+    return cur_coverage
 end
 
 

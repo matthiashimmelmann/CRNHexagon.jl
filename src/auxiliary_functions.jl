@@ -2,6 +2,7 @@ module auxiliary_functions
 
 import HomotopyContinuation: @var, evaluate, Expression
 import LinearAlgebra: inv, det
+using ProgressMeter
 
 #=
 Here, the correct θ's are calculated for all possible circuits. 
@@ -110,6 +111,18 @@ function runSamplingComparison(θ, κs, aη, bη, mcoef, θbaseline; boxsize=100
     #If the file exists, we add to the previously run tests. Else, we set everything to 0.
     global relDict = Dict()
     try
+        f = open("../data/multistationarity_points.txt", "r")
+        global multistationary_points = []
+        while ! eof(f)  
+            k_point = [parse(Float64,entry) for entry in split(readline(f)[2:end-1], ",")]
+            push!(multistationary_points, k_point)
+         end
+    catch e
+        display(e)
+        global multistationary_points = []
+    end
+
+    try
         f = open("../data/$(prefix)$(suffix)triangstoredsolutions$(boxsize).txt", "r")
 
         global pointnumber = parse(Int,readline(f))
@@ -148,7 +161,7 @@ function runSamplingComparison(θ, κs, aη, bη, mcoef, θbaseline; boxsize=100
         display("Run: $(sampleindex)")
         global sampling = filter(sampler -> !any(t->isapprox(t,0), sampler) && evaluate(aη, κs=>sampler)>0 && evaluate(bη, κs=>sampler)<0, [boxsize * abs.(rand(Float64, length(κs))) for _ in 1:1000000])
         global pointnumber = pointnumber+length(sampling)
-        for ind in 1:length(sampling)
+        @showprogress for ind in 1:length(sampling)
             sampler = sampling[ind]
             mval = evaluate(mcoef, κs=>sampler)
             prevval = evaluate(θbaseline, κs=>sampler)
@@ -184,8 +197,12 @@ function runSamplingComparison(θ, κs, aη, bη, mcoef, θbaseline; boxsize=100
                     indicator = true
                 end
             end
+
             if length(collect(Set(winnerarray))) == 1
                 onlyonemodel[winnerarray[1]]+=1
+            end
+            if !indicator
+                push!(multistationary_points, sampler)
             end
             global allmodels += indicator ? 1 : 0 
         end
@@ -203,7 +220,19 @@ function runSamplingComparison(θ, κs, aη, bη, mcoef, θbaseline; boxsize=100
                 write(file, "$(key[1]), $(key[2]): $(relDict[key])\n")
             end
         end
+
+        open("../data/multistationarity_points.txt", "w") do file
+            for pt in multistationary_points
+                write(file, "[")
+                for p in pt[1:end-1]
+                    write(file, "$(p),")
+                end
+                write(file, "$(pt[end])")
+                write(file, "]\n")
+            end
+        end
     end
+    return multistationary_points
 end
 
 function runTest_noDependencies( ; boxsize=1000, numberOfSamplingRuns=62, prefix="", suffix="noDependencies")               
@@ -259,6 +288,40 @@ function compareTwoCovers(cover_suggested::Int, cover_baseline::Int; numberOfSam
 end
 
 
+function createθcircuit_montecarlo(points, coefficients, configurations, cur_weights)
+    output = []
+    _configurations = copy(configurations)
+    for (index, configuration) in enumerate(configurations)
+        _configuration = copy(configuration)
+        while !isempty(_configuration)
+            global weight = cur_weights[index]
+            config = pop!(_configuration)
+            global foundindex = nothing
+            for (j, o) in enumerate(output)
+                if Set(o[3]) == Set(config)
+                    global weight = weight + o[2]
+                    global foundindex = j
+                    break
+                end
+            end
+            if foundindex != nothing
+                deleteat!(output, foundindex)
+            end    
+    
+            if length(config)==2
+                global barycenter = Matrix{Float64}(undef,2,2); barycenter[1,:] = [points[entry][1] for entry in config]; barycenter[2,:] = [points[entry][2] for entry in config]; 
+                global λ = (det(barycenter) == 0) ? [0.5,0.5] : collect(inv(barycenter)*[2,1] / sum(inv(barycenter)*[2,1]))
+                push!(output, [prod([(weight*coefficients[config[i]]/λ[i])^(λ[i]) for i in 1:length(config)]), weight, config])
+            elseif length(config)==3
+                global barycenter, msolve = Matrix{Float64}(undef,3,3), [2,1,1]; barycenter[1,:] = [points[entry][1] for entry in config]; barycenter[2,:] = [points[entry][2] for entry in config]; barycenter[3,:] = [1 for entry in config];
+                global λ = collect(inv(barycenter)*msolve / sum(inv(barycenter)*msolve));
+                push!(output, [prod([(weight*coefficients[config[i]]/λ[i])^(λ[i]) for i in 1:length(config)]), weight, config])
+            end
+        end
+    end
+    display(sum([o[2] for o in output]))
+    return sum([o[1] for o in output])
+end
 
 function createθcircuits_weighted(points, coefficients, configurations; discretization=25)
     θdict = Dict()
@@ -401,6 +464,24 @@ function runSamplingComparison_weighted(θ, θ_weighted, κs, aη, bη, mcoef; d
             end
         end
     end
+end
+
+function runSamplingComparison_MC(sampling, θ_MC, κs, aη, bη, mcoef; discretization, boxsize=100, numberOfSamplingRuns=250, prefix="linearweight", suffix="")
+    #If the file exists, we add to the previously run tests. Else, we set everything to 0.
+    global ourmodel = 0
+    global pointnumber = 0
+    
+    #TODO Create a single list of samples that is re-used every time. 
+
+    @showprogress for ind in 1:length(sampling)
+        sampler = sampling[ind]
+        mval = real(evaluate(mcoef,κs=>sampler))
+        ourval = evaluate(θ_MC, κs=>sampler)
+        if real(ourval) >= -mval
+            global ourmodel += 1
+        end            
+    end
+    return ourmodel
 end
 
 end
