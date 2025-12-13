@@ -1,4 +1,4 @@
-f = open("../data/multistationarity_points.txt", "r")
+f = open("../data/multistationarity_pointsEXAMPLE.txt", "r")
 global multistationary_points = []
 while ! eof(f)  
     k_point = [parse(Float64,entry) for entry in split(readline(f)[2:end-1], ",")]
@@ -17,6 +17,7 @@ coefficients = [K[1]^3*K[3]^2*κ[6]^3*κ[12]^2, K[1]^2*K[2]*K[3]^2*κ[3]*κ[6]^2
 global mcoef = K[1]*K[2]*K[3]*κ[3]*κ[6]*κ[12]*bη
 
 using JuMP
+using Ipopt
 using DynamicPolynomials
 using SumOfSquares
 import CSDP
@@ -26,13 +27,15 @@ for (i,point) in enumerate(multistationary_points)
     current_coefficients = evaluate.(coefficients, κ=>point)
     current_mcoef = evaluate(mcoef, κ=>point)
     @polyvar x y
+    p = sum(current_coefficients[i]*x^hexPoints[i][1]*y^hexPoints[i][2] for i in 1:length(hexPoints)) + current_mcoef * x^2*y
     model = SOSModel(CSDP.Optimizer)
     S = @set x >= 0 && y >= 0
     @variable(model, L)
     set_silent(model)
-    @constraint(model, sum(current_coefficients[i]*x^hexPoints[i][1]*y^hexPoints[i][2] for i in 1:length(hexPoints)) + current_mcoef * x^2*y >= L, domain = S)
+    @constraint(model, p >= L, domain = S, maxdegree = 12)
     @objective(model, Max, L)
     optimize!(model)
+    println("$(objective_value(model)), $(termination_status(model)), $(primal_status(model))")
     if objective_value(model) > 0 && is_solved_and_feasible(model)
         display(point)
         push!(total_points,point)
